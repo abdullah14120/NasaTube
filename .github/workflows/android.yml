@@ -26,26 +26,9 @@ jobs:
         build-scan-terms-of-use-url: "https://gradle.com/help/legal-terms-of-use"
         build-scan-terms-of-use-agree: "yes"
 
-    # --- NAYA STEP: Keystore Decode Karna ---
-    - name: Decode Keystore
-      env:
-        ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+    - name: Build Unsigned/Skipped Sign Release APKs
       run: |
-        echo "? Decoding Key..."
-        echo "$ANDROID_SIGNING_KEY" | tr -d '\n\r ' | base64 --decode > "${{ github.workspace }}/Mahesh.jks"
-
-    # --- UPDATED STEP: Fast Build aur Native Signing Ek Sath ---
-    - name: Build and Sign Release APKs
-      env:
-        ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        ANDROID_ALIAS: ${{ secrets.ANDROID_ALIAS }}
-        ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-      run: |
-        ./gradlew assembleRelease --parallel --build-cache --no-daemon \
-          -Pandroid.injected.signing.store.file="${{ github.workspace }}/Mahesh.jks" \
-          -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
-          -Pandroid.injected.signing.key.alias="$ANDROID_ALIAS" \
-          -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+        ./gradlew assembleRelease --parallel --build-cache --no-daemon
 
     - name: Get version name
       id: version
@@ -60,195 +43,16 @@ jobs:
         SHOULD_RELEASE=$(jq -r '.release' release.json)
         echo "SHOULD_RELEASE=${SHOULD_RELEASE}" >> $GITHUB_OUTPUT
         echo "Release flag: ${SHOULD_RELEASE}"
-        if [ "${SHOULD_RELEASE}" = "true" ]; then
-          echo "? Release will be published"
-        else
-          echo "?? Release publishing is disabled - APKs will be uploaded as artifacts only"
-        fi
 
     - name: List all APK files for debugging
       run: |
-        echo "? All APK files in output directory:"
+        echo "🔍 All APK files in output directory:"
         find app/build/outputs/apk -name "*.apk" -type f -exec ls -lh {} \;
-        echo ""
-        echo "? Directory structure:"
-        ls -R app/build/outputs/apk/
 
-    - name: Create Release
-      if: steps.release_config.outputs.SHOULD_RELEASE == 'true'
-      uses: softprops/action-gh-release@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: v${{ steps.version.outputs.VERSION }}
-        name: Seal Plus v${{ steps.version.outputs.VERSION }}
-        body: |
-          ## ✨ Seal Plus v3.1.0 - Retry All, Download Reliability, Battery Opt-Out
-          
-          ---
-          
-          ### 🔁 Retry All & Queue Recovery
-          
-          * **Retry All on Home** — Retry All button in the "Recent downloads" header for Canceled or Failed tasks
-          * **Queued Tasks Survive Restarts** — Queued tasks restore as queued after force-stop instead of becoming Failed
-          
-          ### 🎬 Download Fixes
-          
-          * **Custom Video Formats Fixed** — Custom formats with unreported codecs download the video correctly (thanks @ptgullas, PR #29)
-          * **MP4 Output for Merged Videos** — Video downloads use MP4 unless MKV is selected
-          * **Configure Switch Respected** — With "Configure before download" off, Quick Download, share, and the URL button download immediately (#30)
-          * **Output Template** — Custom templates no longer need `.%(ext)s` (#14)
-          * **Douyin Login** — Opens as a desktop session (#27)
-          
-          ### 🔋 Battery & Stability
-          
-          * **Hide Battery Reminder** — Opt-out in General settings (#26)
-          * **HarmonyOS Crash Fixed** — Battery settings no longer crash on HarmonyOS 4.x (#20)
-          * **Smoother Progress** — Throttled progress updates fix unresponsive menus on OEM ROMs (#10)
-          * **Crash & Memory Hardening** — Safer download state handling and memory leak fixes
-          
-          ### 💖 Donations & Sponsors
-          
-          * **Trust Wallet Donations** — Crypto Donations page with Trust Wallet deep link and QR code
-          * **Sponsor List** — New community supporters added
-          
-          ### 📦 Installation
-          
-          Download the appropriate APK for your device:
-          - **Universal APK**: Works on all devices (recommended)
-          - **arm64-v8a**: For 64-bit ARM devices (most modern phones)
-          - **armeabi-v7a**: For 32-bit ARM devices
-          - **x86_64**: For 64-bit x86 devices
-          - **x86**: For 32-bit x86 devices
-          
-          ### 📜 Full Changelog
-          See [CHANGELOG.md](https://github.com/MaheshTechnicals/Sealplus/blob/main/CHANGELOG.md) for complete version history.
-          
-          ---
-          
-          Built on: ${{ github.event.head_commit.timestamp }}
-          Commit: ${{ github.sha }}
-        draft: false
-        prerelease: false
-        make_latest: true
-        files: |
-          app/build/outputs/apk/generic/release/*.apk
-
-    - name: Send Telegram Notification to Channel
-      if: steps.release_config.outputs.SHOULD_RELEASE == 'true'
-      continue-on-error: true
-      env:
-        TGTOKEN: ${{ secrets.TGTOKEN }}
-        TGCHANNEL: ${{ secrets.TGCHANNEL }}
-      run: |
-        # Skip if Telegram credentials are not configured
-        if [ -z "$TGTOKEN" ] || [ -z "$TGCHANNEL" ]; then
-          echo "?? Telegram notification skipped (TGTOKEN or TGCHANNEL not configured)"
-          exit 0
-        fi
-        
-        echo "? Sending notification to Telegram Channel: $TGCHANNEL"
-        
-        # Prepare the release URL
-        RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.VERSION }}"
-        
-        # Create a beautiful Telegram message with HTML formatting
-        MESSAGE="<b>🎉 New Release Available!</b> 🚀\n\n"
-        MESSAGE+="━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        MESSAGE+="📱 <b>App Name:</b> Seal Plus\n\n"
-        MESSAGE+="🏷️ <b>Version:</b> v${{ steps.version.outputs.VERSION }}\n\n"
-        MESSAGE+="━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        MESSAGE+="📋 <b>Changelog (v3.1):</b>\n\n"
-        MESSAGE+="<b>🔁 Retry All &amp; Queue Recovery</b>\n"
-        MESSAGE+="  ➤ Retry All button on Home for canceled/failed tasks\n"
-        MESSAGE+="  ➤ Queued tasks survive force-stop instead of failing\n\n"
-        MESSAGE+="<b>🎬 Download Fixes</b>\n"
-        MESSAGE+="  ➤ Custom video formats download video correctly (thanks @ptgullas)\n"
-        MESSAGE+="  ➤ MP4 output for merged videos\n"
-        MESSAGE+="  ➤ Configure switch respected in Quick Download and share\n"
-        MESSAGE+="  ➤ Custom output templates no longer need .%(ext)s\n"
-        MESSAGE+="  ➤ Douyin login opens as desktop session\n\n"
-        MESSAGE+="<b>🔋 Battery &amp; Stability</b>\n"
-        MESSAGE+="  ➤ Hide battery reminder option in General settings\n"
-        MESSAGE+="  ➤ HarmonyOS 4.x battery settings crash fixed\n"
-        MESSAGE+="  ➤ Smoother progress on OEM ROMs, crash &amp; memory hardening\n\n"
-        MESSAGE+="<b>💖 Donations</b>\n"
-        MESSAGE+="  ➤ Trust Wallet deep link &amp; QR code, new sponsors\n\n"
-        MESSAGE+="━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        MESSAGE+="✨ <b>Key Features (v3.1):</b>\n"
-        MESSAGE+="🔁 Retry All — Restart canceled/failed downloads in one tap\n"
-        MESSAGE+="🎬 Custom Formats — Video downloads fixed (PR #29)\n"
-        MESSAGE+="🔋 Hide Battery Reminder — Opt-out in settings\n"
-        MESSAGE+="🌐 1000+ sites via yt-dlp\n\n"
-        MESSAGE+="━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        MESSAGE+="💡 <b>Note:</b> v3.1 adds Retry All on the home screen, fixes custom video format downloads, keeps queued tasks after restarts, adds a battery reminder opt-out, and fixes the HarmonyOS battery crash.\n\n"
-        MESSAGE+="🕐 <i>Released: $(date '+%B %d, %Y at %H:%M UTC')</i>"
-        
-        # URL encode the message to avoid HTML parsing issues
-        MESSAGE_ENCODED=$(echo -ne "$MESSAGE" | jq -sRr @uri)
-        
-        # Send ONLY to Channel
-        curl -s -X POST "https://api.telegram.org/bot${TGTOKEN}/sendMessage" \
-          -d "chat_id=${TGCHANNEL}" \
-          -d "text=${MESSAGE_ENCODED}" \
-          -d "parse_mode=HTML" \
-          -d "disable_web_page_preview=false" \
-          && echo "? Telegram Channel notification sent successfully!" \
-          || echo "? Failed to send Telegram notification"
-
-    - name: Upload Universal APK as Artifact
-      if: steps.release_config.outputs.SHOULD_RELEASE == 'false'
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: SealPlus-${{ steps.version.outputs.VERSION }}-universal
-        path: app/build/outputs/apk/generic/release/*universal*.apk
-        if-no-files-found: warn
-        retention-days: 30
-
-    - name: Upload arm64-v8a APK as Artifact
-      if: steps.release_config.outputs.SHOULD_RELEASE == 'false'
-      uses: actions/upload-artifact@v4
-      with:
-        name: SealPlus-${{ steps.version.outputs.VERSION }}-arm64-v8a
-        path: app/build/outputs/apk/generic/release/*arm64-v8a*.apk
-        if-no-files-found: warn
-        retention-days: 30
-
-    - name: Upload armeabi-v7a APK as Artifact
-      if: steps.release_config.outputs.SHOULD_RELEASE == 'false'
-      uses: actions/upload-artifact@v4
-      with:
-        name: SealPlus-${{ steps.version.outputs.VERSION }}-armeabi-v7a
-        path: app/build/outputs/apk/generic/release/*armeabi-v7a*.apk
-        if-no-files-found: warn
-        retention-days: 30
-
-    - name: Upload x86_64 APK as Artifact
-      if: steps.release_config.outputs.SHOULD_RELEASE == 'false'
-      uses: actions/upload-artifact@v4
-      with:
-        name: SealPlus-${{ steps.version.outputs.VERSION }}-x86_64
-        path: app/build/outputs/apk/generic/release/*x86_64*.apk
-        if-no-files-found: warn
-        retention-days: 30
-
-    - name: Upload x86 APK as Artifact
-      if: steps.release_config.outputs.SHOULD_RELEASE == 'false'
-      uses: actions/upload-artifact@v4
-      with:
-        name: SealPlus-${{ steps.version.outputs.VERSION }}-x86
-        # NOTE: must be "*-x86.apk", not "*x86*.apk" — the latter also matches
-        # "...-x86_64.apk" (substring collision), which bundled the x86_64 APK
-        # into the "x86" artifact as well.
-        path: app/build/outputs/apk/generic/release/*-x86.apk
-        if-no-files-found: warn
-        retention-days: 30
-
-    - name: Upload Artifacts (Backup - Always)
-      if: steps.release_config.outputs.SHOULD_RELEASE == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: signed-apks-backup
-        path: app/build/outputs/apk/generic/release/*.apk
+        name: apks-unsigned
+        path: app/build/outputs/apk/**/*.apk
         if-no-files-found: error
-        retention-days: 20
+        retention-days: 30
