@@ -1,62 +1,29 @@
-stages:
-  - build
+name: Android CI
 
-variables:
-  # 🚀 THE FIX: Global cache ko project ke local .gradle se alag kar diya!
-  GRADLE_USER_HOME: "$CI_PROJECT_DIR/gradle_global_cache"
-  GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+on:
+  pull_request:
+    branches: [ "main" ]
 
-# --- 📦 CACHE CONFIGURATION ---
-cache:
-  key: "$CI_COMMIT_REF_SLUG"
-  paths:
-    # Ab GitLab is naye folder ko cache karega, project folder ko lock nahi karega
-    - gradle_global_cache/wrapper
-    - gradle_global_cache/caches
-    - jdk21/
+jobs:
+  build:
 
-build_job:
-  stage: build
-  image: mobiledevops/android-sdk-image:34.0.1
+    runs-on: ubuntu-latest
 
-  before_script:
-    # --- ☕ SMART JAVA INSTALL ---
-    - |
-      if [ ! -d "$CI_PROJECT_DIR/jdk21" ]; then
-        echo "📥 Downloading Java 21 (Fresh Start)..."
-        curl -L https://download.oracle.com/java/21/latest/jdk-21_linux-x64_bin.tar.gz -o jdk21.tar.gz
-        tar -xzf jdk21.tar.gz
-        rm jdk21.tar.gz
-        
-        EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "jdk-21*" | head -n 1)
-        mv "$EXTRACTED_DIR" jdk21
-      else
-        echo "⚡ Using Cached Java 21"
-      fi
-    
-    # Setup Java Path
-    - export JAVA_HOME="$CI_PROJECT_DIR/jdk21"
-    - export PATH="$JAVA_HOME/bin:$PATH"
+    steps:
+      - uses: actions/checkout@v4
 
-  script:
-    # --- STEP 1: EXTRACT VERSION ---
-    - |
-      VERSION=$(grep -A 1 'val currentVersion: Version =' buildSrc/src/main/kotlin/Version.kt | grep -oP 'versionMajor = \K\d+' | head -1).$(grep -A 1 'val currentVersion: Version =' buildSrc/src/main/kotlin/Version.kt | grep -oP 'versionMinor = \K\d+' | head -1).$(grep -A 1 'val currentVersion: Version =' buildSrc/src/main/kotlin/Version.kt | grep -oP 'versionPatch = \K\d+' | head -1)
-      echo "🏷️ Building Version: $VERSION"
+      - name: set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
 
-    # --- STEP 2: FAST BUILD (WITHOUT SIGNING & KEYS) ---
-    - bash ./gradlew assembleRelease --parallel --build-cache --no-daemon
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
 
-    # --- STEP 3: FIND & SAVE ARTIFACTS ---
-    - mkdir -p release_output
-    - echo "🔍 searching for APKs..."
-    - find app/build/outputs -name "*.apk"
-    - find app/build/outputs -name "*.apk" -exec cp {} release_output/ \;
-    - ls -l release_output/
-
-  artifacts:
-    name: "SealPlus-$CI_COMMIT_SHORT_SHA"
-    paths:
-      - release_output/*.apk
-      expire_in: 1 week
-    access: maintainer
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+      - name: Build with Gradle
+        run: ./gradlew buildGenericRelease
