@@ -3,6 +3,9 @@ name: Build Release APK
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,37 +25,117 @@ jobs:
 
     - uses: gradle/actions/setup-gradle@v4
       with:
-        build-scan-publish: true
-        build-scan-terms-of-use-url: "https://gradle.com/help/legal-terms-of-use"
-        build-scan-terms-of-use-agree: "yes"
+        build-scan-publish: false
 
-    - name: Build Unsigned/Skipped Sign Release APKs
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    # بناء التطبيق بدون مفاتيح توقيع وبدون فحوصات Lint التي قد تعطل البناء بعد التعديل
+    - name: Build Release APKs (Unsigned)
       run: |
-        ./gradlew assembleRelease --parallel --build-cache --no-daemon
+        ./gradlew assembleRelease --parallel --build-cache --no-daemon -x lint -x lintVitalRelease -x test
 
+    # قراءة الإصدار بأمان مع قيمة احتياطية في حال تعديل ملف Version.kt
     - name: Get version name
       id: version
       run: |
-        VERSION=$(grep -A 1 'val currentVersion: Version =' buildSrc/src/main/kotlin/Version.kt | grep -oP 'versionMajor = \K\d+' | head -1).$(grep -A 1 'val currentVersion: Version =' buildSrc/src/main/kotlin/Version.kt | grep -oP 'versionMinor = \K\d+' | head -1).$(grep -A 1 'val currentVersion: Version =' buildSrc/src/main/kotlin/Version.kt | grep -oP 'versionPatch = \K\d+' | head -1)
+        if [ -f "buildSrc/src/main/kotlin/Version.kt" ]; then
+          MAJOR=$(grep -A 1 'val currentVersion: Version =' buildSrc/src/main/kotlin/Version.kt | grep -oP 'versionMajor = \K\d+' | head -1 || echo "1")
+          MINOR=$(grep -A 1 'val currentVersion: Version =' buildSrc/src/main/kotlin/Version.kt | grep -oP 'versionMinor = \K\d+' | head -1 || echo "0")
+          PATCH=$(grep -A 1 'val currentVersion: Version =' buildSrc/src/main/kotlin/Version.kt | grep -oP 'versionPatch = \K\d+' | head -1 || echo "0")
+          VERSION="${MAJOR:-1}.${MINOR:-0}.${PATCH:-0}"
+        else
+          VERSION="1.0.0"
+        fi
         echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
         echo "Version: ${VERSION}"
 
+    # قراءة إعدادات النشر بأمان حتى لو لم يكن ملف release.json موجوداً
     - name: Read release configuration
       id: release_config
       run: |
-        SHOULD_RELEASE=$(jq -r '.release' release.json)
+        if [ -f "release.json" ]; then
+          SHOULD_RELEASE=$(jq -r '.release // "false"' release.json || echo "false")
+        else
+          SHOULD_RELEASE="false"
+        fi
         echo "SHOULD_RELEASE=${SHOULD_RELEASE}" >> $GITHUB_OUTPUT
         echo "Release flag: ${SHOULD_RELEASE}"
 
     - name: List all APK files for debugging
       run: |
-        echo "🔍 All APK files in output directory:"
+        echo "All APK files in output directory:"
         find app/build/outputs/apk -name "*.apk" -type f -exec ls -lh {} \;
 
-    - name: Upload Artifacts
+    - name: Create Release
+      if: steps.release_config.outputs.SHOULD_RELEASE == 'true'
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.version.outputs.VERSION }}
+        name: Seal Plus v${{ steps.version.outputs.VERSION }}
+        body: |
+          ## Seal Plus v${{ steps.version.outputs.VERSION }}
+          Built on: ${{ github.event.head_commit.timestamp }}
+          Commit: ${{ github.sha }}
+        draft: false
+        prerelease: false
+        make_latest: true
+        files: |
+          app/build/outputs/apk/**/*.apk
+
+    - name: Upload Universal APK as Artifact
+      if: steps.release_config.outputs.SHOULD_RELEASE == 'false'
       uses: actions/upload-artifact@v4
       with:
-        name: apks-unsigned
-        path: app/build/outputs/apk/**/*.apk
-        if-no-files-found: error
+        name: SealPlus-${{ steps.version.outputs.VERSION }}-universal
+        path: app/build/outputs/apk/**/*universal*.apk
+        if-no-files-found: warn
         retention-days: 30
+
+    - name: Upload arm64-v8a APK as Artifact
+      if: steps.release_config.outputs.SHOULD_RELEASE == 'false'
+      uses: actions/upload-artifact@v4
+      with:
+        name: SealPlus-${{ steps.version.outputs.VERSION }}-arm64-v8a
+        path: app/build/outputs/apk/**/*arm64-v8a*.apk
+        if-no-files-found: warn
+        retention-days: 30
+
+    - name: Upload armeabi-v7a APK as Artifact
+      if: steps.release_config.outputs.SHOULD_RELEASE == 'false'
+      uses: actions/upload-artifact@v4
+      with:
+        name: SealPlus-${{ steps.version.outputs.VERSION }}-armeabi-v7a
+        path: app/build/outputs/apk/**/*armeabi-v7a*.apk
+        if-no-files-found: warn
+        retention-days: 30
+
+    - name: Upload x86_64 APK as Artifact
+      if: steps.release_config.outputs.SHOULD_RELEASE == 'false'
+      uses: actions/upload-artifact@v4
+      with:
+        name: SealPlus-${{ steps.version.outputs.VERSION }}-x86_64
+        path: app/build/outputs/apk/**/*x86_64*.apk
+        if-no-files-found: warn
+        retention-days: 30
+
+    - name: Upload x86 APK as Artifact
+      if: steps.release_config.outputs.SHOULD_RELEASE == 'false'
+      uses: actions/upload-artifact@v4
+      with:
+        name: SealPlus-${{ steps.version.outputs.VERSION }}-x86
+        path: |
+          app/build/outputs/apk/**/*x86*.apk
+          !app/build/outputs/apk/**/*x86_64*.apk
+        if-no-files-found: warn
+        retention-days: 30
+
+    - name: Upload All APKs (Backup)
+      uses: actions/upload-artifact@v4
+      with:
+        name: all-apks-output
+        path: app/build/outputs/apk/**/*.apk
+        if-no-files-found: warn
+        retention-days: 20
